@@ -26,32 +26,44 @@ module ResultParser =
                     )
             )
         else
-            let result = GoogleTestResult.Parse(File.ReadAllText(outputPath))
-            logger.SendMessage(TestMessageLevel.Informational, "Opened results from " + outputPath)
-
-            let testCaseResultsFlattened = result.GetTestsuites() |> Array.collect (fun f -> f.GetTestcases() |> Array.map(fun result ->
-                (sprintf "%s.%s" result.Classname result.Name
-                ,
-                    (if result.Status.Equals("run") && not(result.XElement.HasElements) then TestOutcome.Passed
-                        else if result.Status.Equals("run") && result.XElement.HasElements then TestOutcome.Failed
-                        else if result.Status.Equals("notrun") then TestOutcome.Skipped
-                        else TestOutcome.None),
-                    (if result.Status.Equals("run") && result.XElement.HasElements then
-                            String.Join("\n\n", result.GetFailures() |> Array.map (fun f -> f.Value))
-                        else null),
-                        result.Time)))
-
-            let mapTestCaseToResult (tc:TestCase) =
-                match testCaseResultsFlattened |> Array.tryFind(fun (testMethod, _, _, _) -> tc.FullyQualifiedName.Split(' ').[0] = testMethod) with
-                | Some(testMethod, result, error, time) ->
+            let allFile = File.ReadAllText(outputPath)
+            if allFile.Length = 0 then
+                logger.SendMessage(TestMessageLevel.Warning, xmlNotFound)
+                testCases |> List.map(fun tc ->
                     TestResult(tc,
-                        ComputerName = System.Environment.MachineName,
-                        Outcome = result,
-                        ErrorMessage = error,
-                        Duration = System.TimeSpan.FromMilliseconds(float (time * decimal 1000))
-                    )
-                | None ->
-                    logger.SendMessage(TestMessageLevel.Error, sprintf "Coudln't find result for %s" (tc.FullyQualifiedName))
-                    TestResult(tc)
+                            ComputerName = System.Environment.MachineName,
+                            Outcome = TestOutcome.Skipped,
+                            ErrorMessage = xmlNotFound
+                        )
+                )
+            else
+                logger.SendMessage(TestMessageLevel.Informational, "file content " + allFile)
+                let result = GoogleTestResult.Parse(allFile)
+                logger.SendMessage(TestMessageLevel.Informational, "Opened results from " + outputPath)
 
-            testCases |> Array.ofSeq |> Array.Parallel.map mapTestCaseToResult |> List.ofArray
+                let testCaseResultsFlattened = result.GetTestsuites() |> Array.collect (fun f -> f.GetTestcases() |> Array.map(fun result ->
+                    (sprintf "%s.%s" result.Classname result.Name
+                    ,
+                        (if result.Status.Equals("run") && not(result.XElement.HasElements) then TestOutcome.Passed
+                            else if result.Status.Equals("run") && result.XElement.HasElements then TestOutcome.Failed
+                            else if result.Status.Equals("notrun") then TestOutcome.Skipped
+                            else TestOutcome.None),
+                        (if result.Status.Equals("run") && result.XElement.HasElements then
+                                String.Join("\n\n", result.GetFailures() |> Array.map (fun f -> f.Value))
+                            else null),
+                            result.Time)))
+
+                let mapTestCaseToResult (tc:TestCase) =
+                    match testCaseResultsFlattened |> Array.tryFind(fun (testMethod, _, _, _) -> tc.FullyQualifiedName.Split(' ').[0] = testMethod) with
+                    | Some(testMethod, result, error, time) ->
+                        TestResult(tc,
+                            ComputerName = System.Environment.MachineName,
+                            Outcome = result,
+                            ErrorMessage = error,
+                            Duration = System.TimeSpan.FromMilliseconds(float (time * decimal 1000))
+                        )
+                    | None ->
+                        logger.SendMessage(TestMessageLevel.Error, sprintf "Coudln't find result for %s" (tc.FullyQualifiedName))
+                        TestResult(tc)
+
+                testCases |> Array.ofSeq |> Array.Parallel.map mapTestCaseToResult |> List.ofArray
